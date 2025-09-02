@@ -1,10 +1,13 @@
+from datetime import datetime, timedelta
+
 from rest_framework import viewsets, status
 from rest_framework.response import Response
 from .models import Author, Book, Member, Loan
 from .serializers import AuthorSerializer, BookSerializer, MemberSerializer, LoanSerializer
 from rest_framework.decorators import action
 from django.utils import timezone
-from .tasks import send_loan_notification
+from .tasks import send_loan_notification, check_overdue_loans
+
 
 class AuthorViewSet(viewsets.ModelViewSet):
     queryset = Author.objects.all()
@@ -52,3 +55,26 @@ class MemberViewSet(viewsets.ModelViewSet):
 class LoanViewSet(viewsets.ModelViewSet):
     queryset = Loan.objects.all()
     serializer_class = LoanSerializer
+
+    # @action(detail=True, methods=['get'])
+    # def test_celery_loans(self, request, pk=None):
+    #     check_overdue_loans.delay()
+    #
+    #     return Response({'status': 'Testing'}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'])
+    def extend_due_date(self, request, pk=None):
+        loan = self.get_object()
+
+        due_date = datetime(loan.due_date.year, loan.due_date.month, loan.due_date.day)
+
+        if request.data.get("additional_days") < 0:
+            return Response({'error': 'Additional days must be greater than 0.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if due_date < datetime.now():
+            return Response({'error': 'Loan is overdue.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        loan.due_date = loan.due_date + timedelta(days=request.data.get("additional_days"))
+        loan.save()
+
+        return Response({'status': 'Loan extended successfully.'}, status=status.HTTP_200_OK)
